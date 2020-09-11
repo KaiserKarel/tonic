@@ -50,6 +50,10 @@ impl Endpoint {
 
     /// Convert an `Endpoint` from a static string.
     ///
+    /// # Panics
+    ///
+    /// This function panics if the argument is an invalid URI.
+    ///
     /// ```
     /// # use tonic::transport::Endpoint;
     /// Endpoint::from_static("https://example.com");
@@ -234,6 +238,10 @@ impl Endpoint {
     }
 
     /// Connect with a custom connector.
+    ///
+    /// This allows you to build a [Channel](struct.Channel.html) that uses a non-HTTP transport.
+    /// See the `uds` example for an example on how to use this function to build channel that
+    /// uses a Unix socket transport.
     pub async fn connect_with_connector<C>(&self, connector: C) -> Result<Channel, Error>
     where
         C: MakeConnection<Uri> + Send + 'static,
@@ -302,23 +310,12 @@ impl TryFrom<String> for Endpoint {
 }
 
 impl TryFrom<&'static str> for Endpoint {
-    type Error = Never;
+    type Error = InvalidUri;
 
     fn try_from(t: &'static str) -> Result<Self, Self::Error> {
-        Ok(Self::from_static(t))
+        Self::from_shared(t.as_bytes())
     }
 }
-
-#[derive(Debug)]
-pub enum Never {}
-
-impl std::fmt::Display for Never {
-    fn fmt(&self, _: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match *self {}
-    }
-}
-
-impl std::error::Error for Never {}
 
 impl fmt::Debug for Endpoint {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {

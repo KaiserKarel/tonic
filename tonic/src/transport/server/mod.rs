@@ -26,7 +26,7 @@ use crate::transport::proxy::{ProxyConfig, ProxySvc};
 use crate::{body::BoxBody, request::ConnectionInfo};
 use futures_core::Stream;
 use futures_util::{
-    future::{self, MapErr},
+    future::{self, Either as FutureEither, MapErr},
     TryFutureExt,
 };
 use http::{HeaderMap, Request, Response};
@@ -78,6 +78,42 @@ pub struct Server {
 pub struct Router<A, B> {
     server: Server,
     routes: Routes<A, B, Request<Body>>,
+}
+
+/// A service that is produced from a Tonic `Router`.
+///
+/// This service implementation will route between multiple Tonic
+/// gRPC endpoints and can be consumed with the rest of the `tower`
+/// ecosystem.
+#[derive(Debug)]
+pub struct RouterService<A, B> {
+    router: Router<A, B>,
+}
+
+impl<A, B> Service<Request<Body>> for RouterService<A, B>
+where
+    A: Service<Request<Body>, Response = Response<BoxBody>> + Clone + Send + 'static,
+    A::Future: Send + 'static,
+    A::Error: Into<crate::Error> + Send,
+    B: Service<Request<Body>, Response = Response<BoxBody>> + Clone + Send + 'static,
+    B::Future: Send + 'static,
+    B::Error: Into<crate::Error> + Send,
+{
+    type Response = Response<BoxBody>;
+    type Future = FutureEither<
+        MapErr<A::Future, fn(A::Error) -> crate::Error>,
+        MapErr<B::Future, fn(B::Error) -> crate::Error>,
+    >;
+    type Error = crate::Error;
+
+    fn poll_ready(&mut self, _: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
+        Poll::Ready(Ok(()))
+    }
+
+    #[inline]
+    fn call(&mut self, req: Request<Body>) -> Self::Future {
+        self.router.routes.call(req)
+    }
 }
 
 /// A trait to provide a static reference to the service's
@@ -253,7 +289,7 @@ impl Server {
     ///
     /// # Note
     /// Even when the argument given is `None` this will capture *all* requests to this service name.
-    /// As a result, one cannot use this to toggle between two indentically named implementations.
+    /// As a result, one cannot use this to toggle between two identically named implementations.
     pub fn add_optional_service<S>(
         &mut self,
         svc: Option<S>,
@@ -393,7 +429,7 @@ where
     ///
     /// # Note
     /// Even when the argument given is `None` this will capture *all* requests to this service name.
-    /// As a result, one cannot use this to toggle between two indentically named implementations.
+    /// As a result, one cannot use this to toggle between two identically named implementations.
     pub fn add_optional_service<S>(
         self,
         svc: Option<S>,
@@ -489,6 +525,11 @@ where
         self.server
             .serve_with_shutdown(self.routes, incoming, Some(signal))
             .await
+    }
+
+    /// Create a tower service out of a router.
+    pub fn into_service(self) -> RouterService<A, B> {
+        RouterService { router: self }
     }
 }
 
@@ -616,6 +657,7 @@ impl Service<Request<Body>> for Unimplemented {
             http::Response::builder()
                 .status(200)
                 .header("grpc-status", "12")
+                .header("content-type", "application/grpc")
                 .body(BoxBody::empty())
                 .unwrap(),
         )
