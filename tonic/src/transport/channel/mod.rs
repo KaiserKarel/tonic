@@ -130,7 +130,7 @@ impl Channel {
         (Self::balance(list, DEFAULT_BUFFER_SIZE), tx)
     }
 
-    pub(crate) fn new<C>(connector: C, endpoint: Endpoint) -> Result<Self, super::Error>
+    pub(crate) fn new<C>(connector: C, endpoint: Endpoint) -> Self
     where
         C: Service<Uri> + Send + 'static,
         C::Error: Into<crate::Error> + Send,
@@ -139,10 +139,10 @@ impl Channel {
     {
         let buffer_size = endpoint.buffer_size.clone().unwrap_or(DEFAULT_BUFFER_SIZE);
 
-        let svc = Connection::new(connector, endpoint).map_err(super::Error::from_source)?;
+        let svc = Connection::lazy(connector, endpoint);
         let svc = Buffer::new(Either::A(svc), buffer_size);
 
-        Ok(Channel { svc })
+        Channel { svc }
     }
 
     pub(crate) async fn connect<C>(connector: C, endpoint: Endpoint) -> Result<Self, super::Error>
@@ -183,7 +183,7 @@ impl GrpcService<BoxBody> for Channel {
     type Future = ResponseFuture;
 
     fn poll_ready(&mut self, cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
-        GrpcService::poll_ready(&mut self.svc, cx).map_err(|e| super::Error::from_source(e))
+        GrpcService::poll_ready(&mut self.svc, cx).map_err(super::Error::from_source)
     }
 
     fn call(&mut self, request: Request<BoxBody>) -> Self::Future {
@@ -197,7 +197,7 @@ impl Future for ResponseFuture {
 
     fn poll(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
         let val = futures_util::ready!(Pin::new(&mut self.inner).poll(cx))
-            .map_err(|e| super::Error::from_source(e))?;
+            .map_err(super::Error::from_source)?;
         Ok(val).into()
     }
 }
