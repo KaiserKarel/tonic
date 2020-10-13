@@ -71,6 +71,7 @@ pub struct Server {
     max_concurrent_streams: Option<u32>,
     tcp_keepalive: Option<Duration>,
     tcp_nodelay: bool,
+    accept_http1: bool,
 }
 
 /// A stack based `Service` router.
@@ -136,6 +137,7 @@ impl Server {
     pub fn builder() -> Self {
         Server {
             tcp_nodelay: true,
+            accept_http1: false,
             ..Default::default()
         }
     }
@@ -244,6 +246,16 @@ impl Server {
         }
     }
 
+    /// Allow this server to accept http1 requests.
+    ///
+    /// Default is `false`.
+    pub fn accept_http1(self, accept_http1: bool) -> Self {
+        Server {
+            accept_http1,
+            ..self
+        }
+    }
+
     /// Intercept inbound headers and add a [`tracing::Span`] to each response future.
     pub fn trace_fn<F>(self, f: F) -> Self
     where
@@ -321,6 +333,7 @@ impl Server {
         let init_stream_window_size = self.init_stream_window_size;
         let max_concurrent_streams = self.max_concurrent_streams;
         let timeout = self.timeout;
+        let http2_only = !self.accept_http1;
 
         let tcp = incoming::tcp_incoming(incoming, self);
         let incoming = accept::from_stream::<_, _, crate::Error>(tcp);
@@ -333,7 +346,7 @@ impl Server {
         };
 
         let server = hyper::Server::builder(incoming)
-            .http2_only(false)
+            .http2_only(http2_only)
             .http2_initial_connection_window_size(init_connection_window_size)
             .http2_initial_stream_window_size(init_stream_window_size)
             .http2_max_concurrent_streams(max_concurrent_streams);
